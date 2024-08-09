@@ -1,4 +1,4 @@
-name: Build and Deploy
+name: Build and Deploy to ECR
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: Build and Deploy to ECR
+    name: Build and Deploy
     runs-on: ubuntu-latest
 
     steps:
@@ -29,9 +29,16 @@ jobs:
       - name: NPM Install
         run: npm install
 
+      # Configure AWS credentials using the GitHub Secrets
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
       # Log in to Amazon ECR
       - name: Log in to Amazon ECR
-        id: login-ecr
         run: |
           aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
 
@@ -54,6 +61,7 @@ jobs:
       - name: Deploy New Container
         run: |
           docker run -d --name swiggy-clone1 -p 3000:3000 ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/swiggy-clone:latest
+
     
       - name: Update kubeconfig
         run: aws eks --region ${{ secrets.AWS_REGION }} update-kubeconfig --name EKS_CLOUD
