@@ -1,45 +1,62 @@
-name: Build
+name: Build and Deploy
 
 on:
   push:
     branches:
-      - main  #
+      - main
 
 jobs:
   build:
-    name: Build
-    runs-on: [self-hosted]
+    name: Build and Deploy to ECR
+    runs-on: ubuntu-latest
+
     steps:
+      # Checkout the code
       - uses: actions/checkout@v2
         with:
-          fetch-depth: 0  
-      - uses: sonarsource/sonarqube-scan-action@master
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          fetch-depth: 0
+
+      # Stop and remove the previous container if it exists
+      - name: Stop Previous Container
+        run: |
+          CONTAINER_ID=$(docker ps -q --filter "name=swiggy-clone1")
+          if [ -n "$CONTAINER_ID" ]; then
+            docker stop $CONTAINER_ID
+            docker rm $CONTAINER_ID
+          fi
+
+      # Install npm dependencies
       - name: NPM Install
         run: npm install
-        
-      - name: Docker build and push
+
+      # Log in to Amazon ECR
+      - name: Log in to Amazon ECR
+        id: login-ecr
         run: |
-          # Run commands to build and push Docker images
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+
+      # Build Docker image
+      - name: Build Docker Image
+        run: |
           docker build -t swiggy-clone .
-          docker tag swiggy-clone gyenoch/swiggy-clone:latest # Change gyenoch to your username
-          docker login -u ${{ secrets.Dockerhub_username }} -p ${{ secrets.Dockerhub_token }}
-          docker push gyenoch/swiggy-clone:latest
-        env:
-          DOCKER_CLI_ACI: 1
-  deploy:
-   needs: build
-   runs-on: [self-hosted]
-   steps:
-      - name: docker pull image
-        run: docker pull gyenoch/swiggy-clone:latest
-      - name: Image scan
-        run: trivy image gyenoch/swiggy-clone:latest > trivyimagedeploy.txt
-      - name: Deploy to container
-        run: docker run -d --name swiggy-clone1 -p 3000:3000 gyenoch/swiggy-clone:latest
+
+      # Tag Docker image
+      - name: Tag Docker Image
+        run: |
+          docker tag swiggy-clone:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/swiggy-clone:latest
+
+      # Push Docker image to ECR
+      - name: Push to Amazon ECR
+        run: |
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/swiggy-clone:latest
+
+      # Run the new Docker container
+      - name: Deploy New Container
+        run: |
+          docker run -d --name swiggy-clone1 -p 3000:3000 ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/swiggy-clone:latest
+    
       - name: Update kubeconfig
-        run: aws eks --region us-east-1 update-kubeconfig --name EKS_CLOUD
-      - name: Deploy to kubernetes
+        run: aws eks --region ${{ secrets.AWS_REGION }} update-kubeconfig --name EKS_CLOUD
+
+      - name: Deploy to Kubernetes
         run: kubectl apply -f deployment-service.yml
